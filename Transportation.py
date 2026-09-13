@@ -1,218 +1,848 @@
-import numpy as np
+# ============================================================
+# TRANSPORTATION PROBLEM
+# VOGEL'S APPROXIMATION METHOD (VAM)
+# FOLLOWED BY MODI METHOD
+# ============================================================
 
-def get_user_input():
-    print("=== Transportation Problem Setup ===")
-    num_sources = int(input("Enter the number of sources: "))
-    num_dests = int(input("Enter the number of destinations: "))
 
-    print("\n--- Enter Supply for each Source ---")
-    supply = []
-    for i in range(num_sources):
-        supply.append(float(input(f"Capacity of Source S{i+1}: ")))
-        
-    print("\n--- Enter Demand for each Destination ---")
-    demand = []
-    for j in range(num_dests):
-        demand.append(float(input(f"Requirement of Destination D{j+1}: ")))
+EPS = 1e-9
 
-    print("\n--- Enter Transportation Costs (C_ij) ---")
-    costs = []
-    for i in range(num_sources):
-        row = []
-        for j in range(num_dests):
-            row.append(float(input(f"Cost from S{i+1} to D{j+1}: ")))
-        costs.append(row)
 
-    return np.array(supply), np.array(demand), np.array(costs)
+# ============================================================
+# PRINT TRANSPORTATION TABLE
+# ============================================================
 
-def balance_problem(supply, demand, costs):
-    total_supply = np.sum(supply)
-    total_demand = np.sum(demand)
-    
-    if total_supply > total_demand:
-        diff = total_supply - total_demand
-        demand = np.append(demand, diff)
-        costs = np.hstack((costs, np.zeros((costs.shape[0], 1))))
-        print(f"\n[!] Problem Unbalanced. Added Dummy Destination with demand {diff}.")
-    elif total_demand > total_supply:
-        diff = total_demand - total_supply
-        supply = np.append(supply, diff)
-        costs = np.vstack((costs, np.zeros((1, costs.shape[1]))))
-        print(f"\n[!] Problem Unbalanced. Added Dummy Source with capacity {diff}.")
-    else:
-        print("\n[+] Problem is balanced.")
-        
-    return supply, demand, costs
+def print_table(cost, allocation, supply, demand, title):
 
-def get_loop(alloc, start_r, start_c):
-    rows, cols = alloc.shape
-    valid = (alloc > 0).astype(bool)
-    valid[start_r, start_c] = True
-    
-    # Prune rows/cols with only 1 allocated cell
-    while True:
-        pruned = False
-        for r in range(rows):
-            if np.sum(valid[r, :]) == 1:
-                valid[r, :] = False
-                pruned = True
-        for c in range(cols):
-            if np.sum(valid[:, c]) == 1:
-                valid[:, c] = False
-                pruned = True
-        if not pruned:
-            break
-            
-    # Sequence the remaining cells into a loop
-    loop = [(start_r, start_c)]
-    curr_r, curr_c = start_r, start_c
-    is_row_search = True 
-    
-    while True:
-        found = False
-        if is_row_search:
-            for c in range(cols):
-                if c != curr_c and valid[curr_r, c]:
-                    if (curr_r, c) not in loop:
-                        loop.append((curr_r, c))
-                        curr_c = c
-                        is_row_search = False
-                        found = True
-                        break
-                    elif (curr_r, c) == loop[0] and len(loop) > 3:
-                        return loop
+    m = len(cost)
+    n = len(cost[0])
+
+    print("\n" + "=" * 80)
+    print(title)
+    print("=" * 80)
+
+    print("\nCost Table / Allocation\n")
+
+    print("        ", end="")
+
+    for j in range(n):
+        print(f"D{j + 1:^12}", end="")
+
+    print("Supply")
+
+    for i in range(m):
+
+        print(f"S{i + 1:<6}", end="")
+
+        for j in range(n):
+
+            print(
+                f"{cost[i][j]:.0f}({allocation[i][j]:.0f})",
+                end=" " * 4
+            )
+
+        print(f"{supply[i]:.0f}")
+
+    print("Demand ", end="")
+
+    for j in range(n):
+        print(f"{demand[j]:.0f}".center(16), end="")
+
+    print()
+
+
+# ============================================================
+# CALCULATE TOTAL TRANSPORTATION COST
+# ============================================================
+
+def total_cost(cost, allocation):
+
+    m = len(cost)
+    n = len(cost[0])
+
+    total = 0
+
+    for i in range(m):
+        for j in range(n):
+            total += cost[i][j] * allocation[i][j]
+
+    return total
+
+
+# ============================================================
+# FIND VAM PENALTY FOR A ROW
+# ============================================================
+
+def row_penalty(cost, row, active_columns):
+
+    values = []
+
+    for j in active_columns:
+        values.append(cost[row][j])
+
+    values.sort()
+
+    if len(values) == 1:
+        return values[0]
+
+    return values[1] - values[0]
+
+
+# ============================================================
+# FIND VAM PENALTY FOR A COLUMN
+# ============================================================
+
+def column_penalty(cost, column, active_rows):
+
+    values = []
+
+    for i in active_rows:
+        values.append(cost[i][column])
+
+    values.sort()
+
+    if len(values) == 1:
+        return values[0]
+
+    return values[1] - values[0]
+
+
+# ============================================================
+# VOGEL'S APPROXIMATION METHOD
+# ============================================================
+
+def vogel_approximation(cost, supply, demand):
+
+    m = len(supply)
+    n = len(demand)
+
+    supply_left = supply.copy()
+    demand_left = demand.copy()
+
+    allocation = [
+        [0 for _ in range(n)]
+        for _ in range(m)
+    ]
+
+    # Set of basic cells
+    basis = set()
+
+    active_rows = set(range(m))
+    active_columns = set(range(n))
+
+    while active_rows and active_columns:
+
+        # ----------------------------------------------------
+        # Calculate row penalties
+        # ----------------------------------------------------
+
+        row_penalties = {}
+
+        for i in active_rows:
+
+            row_penalties[i] = row_penalty(
+                cost,
+                i,
+                active_columns
+            )
+
+        # ----------------------------------------------------
+        # Calculate column penalties
+        # ----------------------------------------------------
+
+        column_penalties = {}
+
+        for j in active_columns:
+
+            column_penalties[j] = column_penalty(
+                cost,
+                j,
+                active_rows
+            )
+
+        # ----------------------------------------------------
+        # Find maximum penalty
+        # ----------------------------------------------------
+
+        maximum_row_penalty = (
+            max(row_penalties.values())
+            if row_penalties else -1
+        )
+
+        maximum_column_penalty = (
+            max(column_penalties.values())
+            if column_penalties else -1
+        )
+
+        # ----------------------------------------------------
+        # Select row or column
+        # ----------------------------------------------------
+
+        if maximum_row_penalty >= maximum_column_penalty:
+
+            selected_row = max(
+                active_rows,
+                key=lambda i: (
+                    row_penalties[i],
+                    -min(cost[i][j] for j in active_columns),
+                    -i
+                )
+            )
+
+            selected_column = min(
+                active_columns,
+                key=lambda j: (
+                    cost[selected_row][j],
+                    j
+                )
+            )
+
         else:
-            for r in range(rows):
-                if r != curr_r and valid[r, curr_c]:
-                    if (r, curr_c) not in loop:
-                        loop.append((r, curr_c))
-                        curr_r = r
-                        is_row_search = True
-                        found = True
-                        break
-                    elif (r, curr_c) == loop[0] and len(loop) > 3:
-                        return loop
-        
-        if not found:
-            if len(loop) == 1:
-                is_row_search = not is_row_search
+
+            selected_column = max(
+                active_columns,
+                key=lambda j: (
+                    column_penalties[j],
+                    -min(cost[i][j] for i in active_rows),
+                    -j
+                )
+            )
+
+            selected_row = min(
+                active_rows,
+                key=lambda i: (
+                    cost[i][selected_column],
+                    i
+                )
+            )
+
+        # ----------------------------------------------------
+        # Allocate as much as possible
+        # ----------------------------------------------------
+
+        quantity = min(
+            supply_left[selected_row],
+            demand_left[selected_column]
+        )
+
+        allocation[selected_row][selected_column] = quantity
+
+        basis.add(
+            (selected_row, selected_column)
+        )
+
+        supply_left[selected_row] -= quantity
+        demand_left[selected_column] -= quantity
+
+        row_finished = abs(
+            supply_left[selected_row]
+        ) < EPS
+
+        column_finished = abs(
+            demand_left[selected_column]
+        ) < EPS
+
+        # ----------------------------------------------------
+        # Handle crossing out
+        # ----------------------------------------------------
+
+        if row_finished and column_finished:
+
+            # We need to maintain m+n-1 basic cells.
+            # Close the row and keep the column active.
+            active_rows.remove(selected_row)
+
+            # Add a zero basic allocation to prevent degeneracy.
+            if len(active_columns) > 1:
+
+                possible_columns = [
+                    j for j in active_columns
+                    if j != selected_column
+                ]
+
+                zero_column = min(
+                    possible_columns,
+                    key=lambda j: (
+                        cost[selected_row][j],
+                        j
+                    )
+                )
+
+                basis.add(
+                    (selected_row, zero_column)
+                )
+
+            elif len(active_rows) > 0:
+
+                possible_rows = list(active_rows)
+
+                zero_row = min(
+                    possible_rows,
+                    key=lambda i: (
+                        cost[i][selected_column],
+                        i
+                    )
+                )
+
+                basis.add(
+                    (zero_row, selected_column)
+                )
+
             else:
+
+                active_columns.remove(
+                    selected_column
+                )
+
+        elif row_finished:
+
+            active_rows.remove(
+                selected_row
+            )
+
+        elif column_finished:
+
+            active_columns.remove(
+                selected_column
+            )
+
+    return allocation, basis
+
+
+# ============================================================
+# FIND CLOSED LOOP FOR MODI
+# ============================================================
+
+def find_cycle(start, basis):
+
+    cells = set(basis)
+    cells.add(start)
+
+    path = [start]
+
+    # --------------------------------------------------------
+    # DFS to find alternating row/column cycle
+    # --------------------------------------------------------
+
+    def dfs(current, move_in_row):
+
+        i, j = current
+
+        if move_in_row:
+
+            candidates = [
+                cell for cell in cells
+                if cell[0] == i and cell != current
+            ]
+
+        else:
+
+            candidates = [
+                cell for cell in cells
+                if cell[1] == j and cell != current
+            ]
+
+        for next_cell in candidates:
+
+            # Closed cycle found
+            if next_cell == start:
+
+                if len(path) >= 4 and len(path) % 2 == 0:
+                    return path + [start]
+
+                continue
+
+            if next_cell in path:
+                continue
+
+            path.append(next_cell)
+
+            result = dfs(
+                next_cell,
+                not move_in_row
+            )
+
+            if result:
+                return result
+
+            path.pop()
+
+        return None
+
+    return dfs(start, True)
+
+
+# ============================================================
+# MODI METHOD
+# ============================================================
+
+def modi(
+    cost,
+    supply,
+    demand,
+    allocation,
+    basis,
+    max_iterations=100
+):
+
+    m = len(supply)
+    n = len(demand)
+
+    allocation = [
+        row.copy()
+        for row in allocation
+    ]
+
+    basis = set(basis)
+
+    for iteration in range(max_iterations):
+
+        # ----------------------------------------------------
+        # Calculate potentials u and v
+        #
+        # For basic cell:
+        #
+        # u[i] + v[j] = cost[i][j]
+        # ----------------------------------------------------
+
+        u = [None] * m
+        v = [None] * n
+
+        u[0] = 0
+
+        changed = True
+
+        while changed:
+
+            changed = False
+
+            for i, j in basis:
+
+                if u[i] is not None and v[j] is None:
+
+                    v[j] = cost[i][j] - u[i]
+                    changed = True
+
+                elif v[j] is not None and u[i] is None:
+
+                    u[i] = cost[i][j] - v[j]
+                    changed = True
+
+        # ----------------------------------------------------
+        # Check whether all potentials were found
+        # ----------------------------------------------------
+
+        if any(value is None for value in u):
+            print("Error calculating row potentials.")
+            return allocation, basis
+
+        if any(value is None for value in v):
+            print("Error calculating column potentials.")
+            return allocation, basis
+
+        # ----------------------------------------------------
+        # Calculate opportunity costs
+        #
+        # Delta(i,j) = C(i,j) - Ui - Vj
+        #
+        # For minimization:
+        # All Delta >= 0 -> optimal
+        # ----------------------------------------------------
+
+        opportunity_cost = [
+            [None for _ in range(n)]
+            for _ in range(m)
+        ]
+
+        entering_cell = None
+        most_negative = 0
+
+        for i in range(m):
+
+            for j in range(n):
+
+                if (i, j) not in basis:
+
+                    delta = (
+                        cost[i][j]
+                        - u[i]
+                        - v[j]
+                    )
+
+                    opportunity_cost[i][j] = delta
+
+                    if delta < most_negative:
+
+                        most_negative = delta
+
+                        entering_cell = (i, j)
+
+        # ----------------------------------------------------
+        # Display MODI iteration
+        # ----------------------------------------------------
+
+        print("\n" + "-" * 70)
+        print(f"MODI Iteration {iteration + 1}")
+        print("-" * 70)
+
+        print("u values:", [round(x, 3) for x in u])
+        print("v values:", [round(x, 3) for x in v])
+
+        print("\nOpportunity Cost Table:")
+
+        for i in range(m):
+
+            for j in range(n):
+
+                if opportunity_cost[i][j] is None:
+                    print("  --  ", end=" ")
+                else:
+                    print(
+                        f"{opportunity_cost[i][j]:6.2f}",
+                        end=" "
+                    )
+
+            print()
+
+        current_cost = total_cost(
+            cost,
+            allocation
+        )
+
+        print(
+            f"\nCurrent Transportation Cost = "
+            f"{current_cost:.2f}"
+        )
+
+        # ----------------------------------------------------
+        # Optimal solution
+        # ----------------------------------------------------
+
+        if entering_cell is None:
+
+            print("\nAll opportunity costs are >= 0.")
+            print("Therefore, the solution is OPTIMAL.")
+
+            return allocation, basis
+
+        # ----------------------------------------------------
+        # Entering variable
+        # ----------------------------------------------------
+
+        print(
+            f"\nEntering cell = "
+            f"({entering_cell[0] + 1}, "
+            f"{entering_cell[1] + 1})"
+        )
+
+        # ----------------------------------------------------
+        # Find closed loop
+        # ----------------------------------------------------
+
+        cycle = find_cycle(
+            entering_cell,
+            basis
+        )
+
+        if cycle is None:
+
+            print("Could not find a MODI closed loop.")
+            return allocation, basis
+
+        print("\nClosed loop:")
+
+        for cell in cycle:
+            print(
+                f"({cell[0] + 1},{cell[1] + 1})",
+                end=" -> "
+            )
+
+        print()
+
+        # ----------------------------------------------------
+        # + - + - signs
+        # ----------------------------------------------------
+
+        plus_cells = []
+        minus_cells = []
+
+        for k, cell in enumerate(cycle[:-1]):
+
+            if k % 2 == 0:
+                plus_cells.append(cell)
+            else:
+                minus_cells.append(cell)
+
+        # ----------------------------------------------------
+        # Find theta
+        #
+        # theta = minimum allocation in '-' cells
+        # ----------------------------------------------------
+
+        theta = min(
+            allocation[i][j]
+            for i, j in minus_cells
+        )
+
+        print(f"Theta = {theta}")
+
+        # ----------------------------------------------------
+        # Update allocations
+        # ----------------------------------------------------
+
+        for k, cell in enumerate(cycle[:-1]):
+
+            i, j = cell
+
+            if k % 2 == 0:
+                allocation[i][j] += theta
+
+            else:
+                allocation[i][j] -= theta
+
+        # ----------------------------------------------------
+        # Add entering cell to basis
+        # ----------------------------------------------------
+
+        basis.add(entering_cell)
+
+        # ----------------------------------------------------
+        # Remove a leaving cell
+        # ----------------------------------------------------
+
+        leaving_cell = None
+
+        for i, j in minus_cells:
+
+            if abs(allocation[i][j]) < EPS:
+
+                leaving_cell = (i, j)
                 break
-    return loop
 
-def solve_transportation():
-    supply, demand, costs = get_user_input()
-    supply, demand, costs = balance_problem(supply, demand, costs)
-    
-    rows, cols = costs.shape
-    allocation = np.zeros((rows, cols))
-    
-    # === PHASE 1: VAM (Initial Solution) ===
-    s_temp, d_temp = supply.copy(), demand.copy()
-    c_temp = costs.copy()
-    
-    while np.sum(s_temp) > 0 and np.sum(d_temp) > 0:
-        row_pen = []
-        for r in range(rows):
-            valid_costs = c_temp[r, :][d_temp > 0]
-            if s_temp[r] == 0 or len(valid_costs) == 0:
-                row_pen.append(-1)
-            elif len(valid_costs) == 1:
-                row_pen.append(valid_costs[0])
-            else:
-                sorted_c = np.sort(valid_costs)
-                row_pen.append(sorted_c[1] - sorted_c[0])
-                
-        col_pen = []
-        for c in range(cols):
-            valid_costs = c_temp[:, c][s_temp > 0]
-            if d_temp[c] == 0 or len(valid_costs) == 0:
-                col_pen.append(-1)
-            elif len(valid_costs) == 1:
-                col_pen.append(valid_costs[0])
-            else:
-                sorted_c = np.sort(valid_costs)
-                col_pen.append(sorted_c[1] - sorted_c[0])
-                
-        if max(row_pen) >= max(col_pen):
-            r = row_pen.index(max(row_pen))
-            c = np.argmin(np.where(d_temp > 0, c_temp[r, :], np.inf))
+        if leaving_cell is not None:
+            basis.remove(leaving_cell)
+
+            print(
+                f"Leaving cell = "
+                f"({leaving_cell[0] + 1}, "
+                f"{leaving_cell[1] + 1})"
+            )
+
+    print("MODI iteration limit reached.")
+
+    return allocation, basis
+
+
+# ============================================================
+# MAIN PROGRAM
+# ============================================================
+
+def main():
+
+    print("=" * 80)
+    print("TRANSPORTATION PROBLEM - VAM + MODI")
+    print("=" * 80)
+
+    # --------------------------------------------------------
+    # Input dimensions
+    # --------------------------------------------------------
+
+    m = int(
+        input("\nEnter number of sources: ")
+    )
+
+    n = int(
+        input("Enter number of destinations: ")
+    )
+
+    # --------------------------------------------------------
+    # Cost matrix
+    # --------------------------------------------------------
+
+    print("\nEnter transportation cost matrix:")
+
+    cost = []
+
+    for i in range(m):
+
+        row = list(
+            map(
+                float,
+                input(
+                    f"Costs from Source S{i + 1}: "
+                ).split()
+            )
+        )
+
+        cost.append(row)
+
+    # --------------------------------------------------------
+    # Supply
+    # --------------------------------------------------------
+
+    print("\nEnter supply of each source:")
+
+    supply = list(
+        map(
+            float,
+            input("Supply: ").split()
+        )
+    )
+
+    # --------------------------------------------------------
+    # Demand
+    # --------------------------------------------------------
+
+    print("\nEnter demand of each destination:")
+
+    demand = list(
+        map(
+            float,
+            input("Demand: ").split()
+        )
+    )
+
+    # --------------------------------------------------------
+    # Check balanced condition
+    # --------------------------------------------------------
+
+    total_supply = sum(supply)
+    total_demand = sum(demand)
+
+    print(
+        f"\nTotal Supply  = {total_supply}"
+    )
+
+    print(
+        f"Total Demand  = {total_demand}"
+    )
+
+    # --------------------------------------------------------
+    # Balance the transportation problem
+    # --------------------------------------------------------
+
+    if abs(total_supply - total_demand) > EPS:
+
+        print("\nProblem is UNBALANCED.")
+
+        if total_supply > total_demand:
+
+            # Add dummy destination
+            difference = total_supply - total_demand
+
+            print(
+                f"Adding Dummy Destination "
+                f"with demand {difference}"
+            )
+
+            for row in cost:
+                row.append(0)
+
+            demand.append(difference)
+
+            n += 1
+
         else:
-            c = col_pen.index(max(col_pen))
-            r = np.argmin(np.where(s_temp > 0, c_temp[:, c], np.inf))
-            
-        qty = min(s_temp[r], d_temp[c])
-        allocation[r, c] = qty
-        s_temp[r] -= qty
-        d_temp[c] -= qty
-        
-        # Degeneracy fix: If both exhaust, leave a tiny trace to preserve basis
-        if s_temp[r] == 0 and d_temp[c] == 0 and (np.sum(s_temp) > 0 or np.sum(d_temp) > 0):
-            d_temp[c] = 1e-10 
 
-    init_cost = np.sum(np.where(allocation < 1e-5, 0, allocation) * costs)
-    print(f"\n[+] VAM Initial Cost: {init_cost}")
+            # Add dummy source
+            difference = total_demand - total_supply
 
-    # === PHASE 2: MODI & STEPPING STONE (Iterative Improvement) ===
-    iteration = 1
-    while True:
-        u = np.full(rows, np.nan)
-        v = np.full(cols, np.nan)
-        u[0] = 0 
-        
-        while np.isnan(u).any() or np.isnan(v).any():
-            progress = False
-            for i in range(rows):
-                for j in range(cols):
-                    if allocation[i, j] > 0:
-                        if not np.isnan(u[i]) and np.isnan(v[j]):
-                            v[j] = costs[i, j] - u[i]
-                            progress = True
-                        elif not np.isnan(v[j]) and np.isnan(u[i]):
-                            u[i] = costs[i, j] - v[j]
-                            progress = True
-            if not progress:
-                if np.isnan(u).any(): u[np.where(np.isnan(u))[0][0]] = 0
-                elif np.isnan(v).any(): v[np.where(np.isnan(v))[0][0]] = 0
+            print(
+                f"Adding Dummy Source "
+                f"with supply {difference}"
+            )
 
-        min_dij = 0
-        enter_r, enter_c = -1, -1
-        
-        for i in range(rows):
-            for j in range(cols):
-                if allocation[i, j] == 0:
-                    d_ij = costs[i, j] - (u[i] + v[j])
-                    if d_ij < min_dij - 1e-7:
-                        min_dij = d_ij
-                        enter_r, enter_c = i, j
+            cost.append(
+                [0] * n
+            )
 
-        if min_dij >= -1e-7:
-            print(f"    -> Iteration {iteration}: No negative d_ij found. OPTIMAL!")
-            break
+            supply.append(difference)
 
-        print(f"    -> Iteration {iteration}: Negative d_ij ({min_dij:.1f}) found. Shifting loop...")
-        
-        loop = get_loop(allocation, enter_r, enter_c)
-        minus_cells = [loop[k] for k in range(1, len(loop), 2)]
-        theta = min(allocation[r, c] for r, c in minus_cells)
-        
-        for k, (r, c) in enumerate(loop):
-            if k % 2 == 0: allocation[r, c] += theta
-            else: allocation[r, c] -= theta
-            
-        allocation = np.where(allocation < 1e-11, 0, allocation)
-        iteration += 1
+            m += 1
 
-    # === FINAL OUTPUT ===
-    clean_alloc = np.where(allocation < 1e-5, 0, allocation)
-    total_cost = np.sum(clean_alloc * costs)
-    
-    print("\n" + "="*40)
-    print("          FINAL OPTIMAL PLAN")
-    print("="*40)
-    print("\nOptimal Allocation Matrix:")
-    print(clean_alloc)
-    print(f"\nFinal Total Transportation Cost: {total_cost}")
+    else:
+
+        print("\nProblem is BALANCED.")
+
+    # ========================================================
+    # STEP 1: VAM
+    # ========================================================
+
+    allocation, basis = vogel_approximation(
+        cost,
+        supply,
+        demand
+    )
+
+    print_table(
+        cost,
+        allocation,
+        supply,
+        demand,
+        "INITIAL BASIC FEASIBLE SOLUTION USING VAM"
+    )
+
+    vam_cost = total_cost(
+        cost,
+        allocation
+    )
+
+    print(
+        f"\nVAM Initial Transportation Cost = "
+        f"{vam_cost:.2f}"
+    )
+
+    # ========================================================
+    # STEP 2: MODI
+    # ========================================================
+
+    allocation, basis = modi(
+        cost,
+        supply,
+        demand,
+        allocation,
+        basis
+    )
+
+    # ========================================================
+    # FINAL RESULT
+    # ========================================================
+
+    print_table(
+        cost,
+        allocation,
+        supply,
+        demand,
+        "FINAL OPTIMAL SOLUTION USING MODI"
+    )
+
+    optimal_cost = total_cost(
+        cost,
+        allocation
+    )
+
+    print("\n" + "=" * 80)
+    print("FINAL RESULT")
+    print("=" * 80)
+
+    print("\nOptimal Shipment Plan:")
+
+    for i in range(m):
+
+        for j in range(n):
+
+            if allocation[i][j] > EPS:
+
+                print(
+                    f"Send {allocation[i][j]:.0f} units "
+                    f"from S{i + 1} to D{j + 1}"
+                )
+
+    print(
+        f"\nMinimum Total Transportation Cost = "
+        f"{optimal_cost:.2f}"
+    )
+
 
 if __name__ == "__main__":
-    solve_transportation()
+    main()
