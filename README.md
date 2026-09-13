@@ -1,5 +1,3 @@
-# Transportation-Problem-VAM-MODI-
-Python implementations of classic Operations Research algorithms. Features a Big-M Simplex solver for constrained Linear Programming Problems (LPP) and a complete Transportation Problem solver using VAM, MODI, and automated Stepping Stone iterative improvement.
 # Operations Research Optimization Solvers
 
 This repository contains Python implementations of two well-known optimization algorithms used in Operations Research and Supply Chain Management. These scripts were developed to algorithmically handle both standard and degenerate optimization problems from scratch, without relying on external optimization libraries like SciPy.
@@ -20,6 +18,3 @@ A fully interactive, end-to-end solver for transportation and logistics optimiza
 * **Phase 3 (Stepping Stone Improvement):** Automatically traces rectangular closed-loop paths (using Breadth-First Search logic) to shift unit allocations from expensive routes to cheaper ones, iterating until mathematical optimality is proven.
 * **Robust Degeneracy Handling:** Employs a Union-Find algorithm to detect degenerate Initial Basic Feasible Solutions (where allocations $< m + n - 1$) and strategically places zero-value allocations to preserve the basis without creating invalid cycles.
 
-<img width="1600" height="1041" alt="image" src="https://github.com/user-attachments/assets/ae9a9483-6114-4b04-8c99-de3fa5fb6006" />
-
-<img width="1600" height="1041" alt="image" src="https://github.com/user-attachments/assets/ccc025ed-f19b-40cd-a31f-0e9426f1afff" />
